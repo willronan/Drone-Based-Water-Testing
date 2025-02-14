@@ -1,0 +1,73 @@
+{
+    "definition": {
+        "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+        "contentVersion": "1.0.0.0",
+        "triggers": {
+            "When_a_message_is_received_in_a_queue_(auto-complete)": {
+                "recurrence": {
+                    "interval": 5,
+                    "frequency": "Second",
+                    "timeZone": "Pacific Standard Time"
+                },
+                "evaluatedRecurrence": {
+                    "interval": 5,
+                    "frequency": "Second",
+                    "timeZone": "Pacific Standard Time"
+                },
+                "type": "ApiConnection",
+                "inputs": {
+                    "host": {
+                        "connection": {
+                            "name": "@parameters('$connections')['servicebus']['connectionId']"
+                        }
+                    },
+                    "method": "get",
+                    "path": "/@{encodeURIComponent(encodeURIComponent('notehub'))}/messages/head",
+                    "queries": {
+                        "queueType": "Main"
+                    }
+                }
+            }
+        },
+        "actions": {
+            "Send_event": {
+                "runAfter": {},
+                "type": "ApiConnection",
+                "inputs": {
+                    "host": {
+                        "connection": {
+                            "name": "@parameters('$connections')['eventhubs-2']['connectionId']"
+                        }
+                    },
+                    "method": "post",
+                    "path": "/@{encodeURIComponent('droneeventhub')}/events",
+                    "body": "@triggerOutputs()?['body']"
+                }
+            }
+        },
+        "outputs": {},
+        "parameters": {
+            "$connections": {
+                "type": "Object",
+                "defaultValue": {}
+            }
+        }
+    },
+    "parameters": {
+        "$connections": {
+            "type": "Object",
+            "value": {
+                "servicebus": {
+                    "id": "/subscriptions/3c65f343-8a99-49f5-87d1-8e353c84b60f/providers/Microsoft.Web/locations/canadacentral/managedApis/servicebus",
+                    "connectionId": "/subscriptions/3c65f343-8a99-49f5-87d1-8e353c84b60f/resourceGroups/UBC-CLEAR/providers/Microsoft.Web/connections/servicebus-4",
+                    "connectionName": "servicebus-4"
+                },
+                "eventhubs-2": {
+                    "id": "/subscriptions/3c65f343-8a99-49f5-87d1-8e353c84b60f/providers/Microsoft.Web/locations/canadacentral/managedApis/eventhubs",
+                    "connectionId": "/subscriptions/3c65f343-8a99-49f5-87d1-8e353c84b60f/resourceGroups/UBC-CLEAR/providers/Microsoft.Web/connections/eventhubs-3",
+                    "connectionName": "eventhubs-3"
+                }
+            }
+        }
+    }
+}
