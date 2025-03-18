@@ -33,6 +33,8 @@ const char *time_and_date;
 int time_UNX = 0;
 int minutes = 0;
 String sensorstring;
+String tempsensorstring;
+boolean sensor_string_complete = false;  
 
 /*
  * Choose an interrupt capable pin to reduce polling and improve
@@ -43,7 +45,13 @@ String sensorstring;
 void setup() {
   /* Initialize serial and wait up to 5 seconds for port to open */
   Serial.begin(9600);
+  myserial.begin(9600, SERIAL_8N1, RXD2, TXD2); 
   for(unsigned long const serialBeginTime = millis(); !Serial && (millis() - serialBeginTime <= 5000); ) { }
+
+  //while (myserial.available() == 0){
+  //  Serial.println("UART Unavailable");
+  //  delay(1000);
+  //}
 
   /* Set the debug message level:
    * - DBG_ERROR: Only show error messages
@@ -62,6 +70,8 @@ void setup() {
 
   Wire.begin();
   tempSensor.init();
+
+  
 
   /* This function takes care of connecting your sketch variables to the ArduinoIoTCloud object */
   initProperties();
@@ -86,13 +96,15 @@ void loop() {
 
     salinity = readAtlasSensor();
 
+    Serial.print("Salinity: ");
+    Serial.println(salinity);
+
     temperature = tempSensor.temperature(); //poll your sensor here;
     tempSensor.read();
 
     Serial.print("Temperature: ");
     Serial.println(temperature);
-    Serial.print("Salinity: ");
-    Serial.println(salinity);
+
 
     J *req = NoteNewRequest("card.time");
     if (J *rsp = NoteRequestResponse(req))
@@ -151,16 +163,39 @@ const char *getDateTimeFromUnix(time_t time, int minutesOffset) {
 
 
 float readAtlasSensor(){
+
+  sensorstring = "";
+
+  myserial.print("R");  
+
+  Serial.println("In the atlas function");
   // Read from UART2 and store message until full line received
   while (myserial.available()) {
+
+   //Serial.println("In the atlas while loop");
+
     char inchar = (char)myserial.read();
     if (inchar == '\r') {  // Message complete
       Serial.print("Received: ");  
-      Serial.println(sensorstring);  
-      return sensorstring.toFloat(); 
+      Serial.println(tempsensorstring); 
+      sensor_string_complete = true; 
+      
     } else {
-      sensorstring += inchar;  
+      tempsensorstring += inchar;  
+      Serial.print("Adding char: ");
+      Serial.println(inchar);
     }
   }
+
+  if (sensor_string_complete == true) {               //if a string from the Atlas Scientific product has been received in its entirety
+    sensorstring = tempsensorstring;
+    sensor_string_complete = false;
+    tempsensorstring = "";
+    
+    return sensorstring.toFloat(); 
+
+  }
+
+
 }
 
