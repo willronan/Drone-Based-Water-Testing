@@ -16,13 +16,16 @@
 #include <Notecard.h>
 #include "thingProperties.h"
 #include "TSYS01.h"
+#include <Wire.h>   
 
 #if !defined(LED_BUILTIN) && !defined(ARDUINO_NANO_ESP32)
 static int const LED_BUILTIN = 2;
 #endif
 
-// Hardware serial for communicating with Atlas sensor
-HardwareSerial myserial(2);
+#define address 100              //default I2C ID number for EZO EC Circuit.
+
+char computerdata[32];           //we make a 32 byte character array to hold incoming data from a pc/mac/other.
+
 
 // UART pins for Atlas sensor
 #define RXD2 16
@@ -32,9 +35,17 @@ TSYS01 tempSensor;
 const char *time_and_date;
 int time_UNX = 0;
 int minutes = 0;
-String sensorstring;
-String tempsensorstring;
-boolean sensor_string_complete = false;  
+
+
+
+int time_ = 570;
+char AtlasCommand[32] = "r";
+byte code = 0;
+byte in_char = 0;                //used as a 1 byte buffer to store inbound bytes from the EC Circuit.
+byte i = 0;                      //counter used for ec_data array.
+char ec_data[32];                //we make a 32 byte character array to hold incoming data from the EC circuit.
+
+
 
 /*
  * Choose an interrupt capable pin to reduce polling and improve
@@ -45,13 +56,8 @@ boolean sensor_string_complete = false;
 void setup() {
   /* Initialize serial and wait up to 5 seconds for port to open */
   Serial.begin(9600);
-  myserial.begin(9600, SERIAL_8N1, RXD2, TXD2); 
-  for(unsigned long const serialBeginTime = millis(); !Serial && (millis() - serialBeginTime <= 5000); ) { }
 
-  //while (myserial.available() == 0){
-  //  Serial.println("UART Unavailable");
-  //  delay(1000);
-  //}
+  for(unsigned long const serialBeginTime = millis(); !Serial && (millis() - serialBeginTime <= 5000); ) { }
 
   /* Set the debug message level:
    * - DBG_ERROR: Only show error messages
@@ -161,41 +167,52 @@ const char *getDateTimeFromUnix(time_t time, int minutesOffset) {
     return buffer;
 }
 
-
 float readAtlasSensor(){
 
-  sensorstring = "";
+  Wire.beginTransmission(address);                                            //call the circuit by its ID number.
+  Wire.write((uint8_t *)AtlasCommand, strlen(AtlasCommand));                  //transmit the command that was sent through the serial port.
+  Wire.endTransmission();                                                     //end the I2C data transmission.
 
-  myserial.print("R");  
+  delay(time_);
 
-  Serial.println("In the atlas function");
-  // Read from UART2 and store message until full line received
-  while (myserial.available()) {
 
-   //Serial.println("In the atlas while loop");
+  Wire.requestFrom(address, 32, 1);
 
-    char inchar = (char)myserial.read();
-    if (inchar == '\r') {  // Message complete
-      Serial.print("Received: ");  
-      Serial.println(tempsensorstring); 
-      sensor_string_complete = true; 
-      
-    } else {
-      tempsensorstring += inchar;  
-      Serial.print("Adding char: ");
-      Serial.println(inchar);
+  code = Wire.read();
+
+  switch (code) {                           //switch case based on what the response code is.
+    case 1:                                 //decimal 1.
+      Serial.println("Success");            //means the command was successful.
+      break;                                //exits the switch case.
+
+    case 2:                                 //decimal 2.
+      Serial.println("Failed");             //means the command has failed.
+      break;                                //exits the switch case.
+
+    case 254:                               //decimal 254.
+      Serial.println("Pending");            //means the command has not yet been finished calculating.
+      break;                                //exits the switch case.
+
+    case 255:                               //decimal 255.
+      Serial.println("No Data");            //means there is no further data to send.
+      break;                                //exits the switch case.
+  }
+
+  while (Wire.available()) {                 //are there bytes to receive.
+    in_char = Wire.read();                   //receive a byte.
+    ec_data[i] = in_char;                    //load this byte into our array.
+    i += 1;                                  //incur the counter for the array element.
+    if (in_char == 0) {                      //if we see that we have been sent a null command.
+      i = 0;                                 //reset the counter i to 0.
+      break;                                 //exit the while loop.
     }
   }
 
-  if (sensor_string_complete == true) {               //if a string from the Atlas Scientific product has been received in its entirety
-    sensorstring = tempsensorstring;
-    sensor_string_complete = false;
-    tempsensorstring = "";
-    
-    return sensorstring.toFloat(); 
-
-  }
-
+  Serial.println(ec_data);                  //print the data.
+  return atof(ec_data);
 
 }
+
+
+
 
