@@ -40,13 +40,15 @@ static const int mosi = 18;
 static const int cs = 21;
 // UART pins for GPS module
 static const int RXPin = 16, TXPin = 17;
-SoftwareSerial ss(RXPin, TXPin);
+HardwareSerial gpsSerial(1);
+
 
 
 /*
   GLOBAL VARIABLES
 */
 File file;
+const uint32_t GPS_BAUD = 9600;
 int time_ = 570;                 // delay for between salinity measurments
 char AtlasCommand[32] = "r";     // read command to poll salinity sensor
 byte code = 0;                   // holds sensor response
@@ -95,6 +97,7 @@ void setup() {
   double lastLat = 0.000000;
   double lastLon = 0.000000;
 
+  gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RXPin, TXPin); 
 
   
   //  UART defined in 
@@ -137,7 +140,13 @@ void loop() {
   }
 
   if(!fileCreated){
-    file = SD.open("/drone_data.txt", FILE_WRITE);
+    time_and_date = getCardTime();
+    time_and_date.replace(":", "");  // Replace colons with underscores
+    time_and_date.replace("Z", "");   // Optional: remove 'Z'
+    String fileName = "/drone_reading_" + time_and_date + ".txt";
+
+
+    file = SD.open(fileName, FILE_WRITE);
     if (!file) {
       Serial.println("Failed to open file for writing");
       // if error blink LED
@@ -157,6 +166,7 @@ void loop() {
     getGPS(&lat, &lon);
     location = Location(lat, lon);
     time_and_date = getCardTime();
+
 
     // save in microSD file
     writeToSD(time_and_date, lat, lon, salinity, temperature, file);
@@ -221,30 +231,33 @@ float readAtlasSensor(){
 
 }
 
-void getGPS(double* lat, double* lon){     
-  while (ss.available() > 0) {
-    if (gps.encode(ss.read())){ 
-      *lat = gps.location.lat();
-      *lon = gps.location.lng();
-    } else {
-      Serial.print(F("INVALID"));
-    }
+void getGPS(double* lat, double* lon){   
+  Serial.println("getting GPS");
+  while (gpsSerial.available() > 0) {
+    gps.encode(gpsSerial.read());
   }
+  if (gps.location.isUpdated()) {
+    *lat = gps.location.lat();
+    *lon = gps.location.lng();
+  } else {
+    Serial.print(F("INVALID"));
+  }
+
 }
 
 String getCardTime(){
-      // get current time
-    J *req = NoteNewRequest("card.time");
-    if (J *rsp = NoteRequestResponse(req))
-    {
+    // get current time
+  J *req = NoteNewRequest("card.time");
+  if (J *rsp = NoteRequestResponse(req))
+  {
 
-      int time = JGetNumber(rsp, "time");
-      int minutes = JGetNumber(rsp, "minutes");
-      String time_and_date = getDateTimeFromUnix(time, minutes);
+    int time = JGetNumber(rsp, "time");
+    int minutes = JGetNumber(rsp, "minutes");
+    String time_and_date = getDateTimeFromUnix(time, minutes);
 
-      NoteDeleteResponse(rsp);
-    }
-  return time_and_date;
+    NoteDeleteResponse(rsp);
+    return time_and_date;
+  }
 }
 
 
@@ -279,7 +292,52 @@ void writeToSD(String wtime, double latitude, double longitude, double sal, doub
 void signalErrorWithLED(){
   while(true){
     digitalWrite(LED_BUILTIN, true);
+    delay(1000);
+    digitalWrite(LED_BUILTIN, false);
+    delay(500);
+    digitalWrite(LED_BUILTIN, true);
+    delay(500);
+    digitalWrite(LED_BUILTIN, false);
+    delay(350);
+    digitalWrite(LED_BUILTIN, true);
+    delay(350);
+    digitalWrite(LED_BUILTIN, false);
+    delay(250);
+    digitalWrite(LED_BUILTIN, true);
+    delay(250);
+    digitalWrite(LED_BUILTIN, false);
+    delay(200);
+    digitalWrite(LED_BUILTIN, true);
+    delay(200);
+    digitalWrite(LED_BUILTIN, false);
+    delay(150);
+    digitalWrite(LED_BUILTIN, true);
+    delay(150);
+    digitalWrite(LED_BUILTIN, false);
+    delay(125);
+    digitalWrite(LED_BUILTIN, true);
+    delay(125);
+    digitalWrite(LED_BUILTIN, false);
+    delay(100);
+    digitalWrite(LED_BUILTIN, true);
     delay(100);
     digitalWrite(LED_BUILTIN, false);
+    delay(75);
+    digitalWrite(LED_BUILTIN, true);
+    delay(75);
+    digitalWrite(LED_BUILTIN, false);
+    delay(50);
+    digitalWrite(LED_BUILTIN, true);
+    delay(50);
+    digitalWrite(LED_BUILTIN, false);
+    delay(50);
+    digitalWrite(LED_BUILTIN, true);
+    delay(50);
+    digitalWrite(LED_BUILTIN, false);
+    delay(50);
+    digitalWrite(LED_BUILTIN, true);
+    delay(50);
+    digitalWrite(LED_BUILTIN, false);
+    delay(1000);
   }
 }
