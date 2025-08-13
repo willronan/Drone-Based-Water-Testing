@@ -14,16 +14,22 @@
 // #define UART_INTERFACE Serial1
 
 void onLedChange();
+void onMicroSDChange();
 
 bool led;
+bool microSD;
 float temperature;
 float salinity;
 CloudLocation location;
-
 double lat;
 double lon;
 String time_and_date;       // time & date to be recieved from notecard
 
+
+
+/*
+  GPS
+*/
 String longitude;
 String latitude;
 
@@ -35,10 +41,12 @@ NotecardConnectionHandler ArduinoIoTPreferredConnection(NOTECARD_PRODUCT_UID, UA
 
 void initProperties() {
   ArduinoCloud.addProperty(led, Permission::ReadWrite).onUpdate(onLedChange);
+  ArduinoCloud.addProperty(microSD, Permission::ReadWrite).onUpdate(onMicroSDChange);
   //ArduinoCloud.addProperty(potentiometer, Permission::Read).publishOnChange(10);
   //ArduinoCloud.addProperty(seconds, Permission::Read).publishEvery(5 * MINUTES);
   ArduinoCloud.addProperty(temperature, Permission::Read).publishOnChange(0);
   ArduinoCloud.addProperty(salinity, Permission::Read).publishOnChange(0);
+
   ArduinoCloud.addProperty(location, Permission::Read).publishOnChange(0);
 
 
