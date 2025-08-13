@@ -43,6 +43,8 @@ static const int RXPin = 16, TXPin = 17;
 HardwareSerial gpsSerial(1);
 
 
+#define productUID "com.gmail.willronan4:drone"
+
 
 /*
   GLOBAL VARIABLES
@@ -56,13 +58,20 @@ byte in_char = 0;                // 1 byte buffer to store inbound bytes from th
 byte i = 0;                      // counter used for ec_data array
 char ec_data[32];                // 32 byte character array to hold incoming data from the EC circuit.
 
-bool fileCreated = false;        // ensures data file gets created
+/*
+  LOCAL DATA SAVING VARIABLES
+*/
+bool microSdSafety = false;        // ensures data file gets created
+int fileCount = 0;
 
 /*
  * Choose an interrupt capable pin to reduce polling and improve
  * the overall responsiveness of the ArduinoIoTCloud library
  */
 // #define ATTN_PIN 9
+
+
+
 
 
 /*
@@ -89,6 +98,25 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   Serial.println(1);
 
+  //{
+  //  J *req = NoteNewRequest("hub.set");
+  //  if (req != NULL) {
+  //    JAddStringToObject(req, "product", productUID);
+  //    JAddStringToObject(req, "mode", "continuous");
+  //    NoteRequest(req);
+  //  }
+  //}
+
+  //J *req = NoteNewRequest("hub.sync");
+  //{
+  //  if (req != NULL) {
+  //    JAddStringToObject(req, "allow", "true");
+  //  }
+  //  Serial.println("Set allow to true");
+  //  NoteRequest(req);
+  //}
+
+
   // initialize sensor data 
   double salinity = 0;
   double temperature = 0;
@@ -103,29 +131,20 @@ void setup() {
   //  UART defined in 
   Wire.begin();                       //  I2C 
   tempSensor.init();                  //  I2C
-  SPI.begin(sck, miso, mosi, cs);     //  SPI
-  if (!SD.begin(cs)) {                
-    Serial.println("Card Mount Failed");
-    return;
-  }
   Serial.println(2);
 
   // connects variables to arduino cloud
   initProperties();
-  Serial.println(3);
 
   /* Initialize Arduino IoT Cloud library */
 #ifndef ATTN_PIN
   ArduinoCloud.begin(ArduinoIoTPreferredConnection);
-  ArduinoCloud.setNotecardPollingInterval(3000);  // default: 1000ms, min: 250ms
+  ArduinoCloud.setNotecardPollingInterval(2000);  // default: 1000ms, min: 250ms
 #else
   ArduinoCloud.begin(ArduinoIoTPreferredConnection, ATTN_PIN);
 #endif
   ArduinoCloud.printDebugInfo();
 }
-
-
-
 
 /*
 
@@ -139,37 +158,33 @@ void loop() {
     ArduinoCloud.update();
   }
 
-  if(!fileCreated){
-    time_and_date = getCardTime();
-    time_and_date.replace(":", "");  // Replace colons with underscores
-    time_and_date.replace("Z", "");   // Optional: remove 'Z'
-    String fileName = "/drone_reading_" + time_and_date + ".txt";
+  // DATA COLLECTION HAPPENS HERE 
+  if (led == true){
 
-
-    file = SD.open(fileName, FILE_WRITE);
-    if (!file) {
-      Serial.println("Failed to open file for writing");
-      // if error blink LED
-      signalErrorWithLED();
-    }
-    file.println("Logging data:");
-    fileCreated = true;
-    Serial.println(5);
-  }
-
-
-  if (led == true){ 
     // collect data
-    salinity = readAtlasSensor();
     temperature = tempSensor.temperature(); 
+    salinity = readAtlasSensor();
+    Serial.print("Salinity:");
+    Serial.println(salinity);
     tempSensor.read();
-    getGPS(&lat, &lon);
+    getGPS(&lat, &lon); 
     location = Location(lat, lon);
     time_and_date = getCardTime();
 
+    //ArduinoIoTPreferredConnection.initiateNotehubSync();
+
+    Serial.print("Time: ");
+    Serial.println(time_and_date);
+
+    //getCellMetrics(&sinr, &rssi, &rsrp, &rsrq);
+
 
     // save in microSD file
-    writeToSD(time_and_date, lat, lon, salinity, temperature, file);
+    if(microSdSafety == true){
+      Serial.println("calling writeToSD");
+      writeToSD(time_and_date, lat, lon, salinity, temperature, file);
+
+    }
 
 
   }
@@ -184,15 +199,49 @@ void onLedChange() {
   digitalWrite(LED_BUILTIN, led);
 }
 
+void onMicroSDChange(){
+  if(microSD){
 
+    SPI.begin(sck, miso, mosi, cs);     //  SPI
+    if (!SD.begin(cs)) {                
+      Serial.println("Card Mount Failed");
+      return;
+    }
+
+    time_and_date = getCardTime();
+    time_and_date.replace(":", "");  // Replace colons with underscores
+    time_and_date.replace("Z", "");   // Optional: remove 'Z'
+    fileCount = fileCount + 1;
+    String fileName = "/drone_reading_" + time_and_date + "_session" + String(fileCount) + ".txt";
+
+
+    file = SD.open(fileName, FILE_WRITE);
+    if (!file) {
+      Serial.println("Failed to open file for writing");
+      // if error blink LED
+      signalErrorWithLED();
+    }
+    file.println("Logging data:");
+    Serial.println("Created new local data file" + fileName);
+    
+    microSdSafety = true;
+  }
+  if (!microSD){
+    microSdSafety = false;
+    SD.end();  // deinitializes SPI and unmounts the card
+    SPI.end();
+    Serial.printf("SPI ended, safe to eject microSD");
+
+  }
+}
+
+// COLLECT SALINITY SENSOR DATA
 float readAtlasSensor(){
-
-  Wire.beginTransmission(address);                                            //call the circuit by its ID number.
+  Wire.beginTransmission(address);                                            //call the circuit by its ID number.                        // temp calibration
   Wire.write((uint8_t *)AtlasCommand, strlen(AtlasCommand));                  //transmit the command that was sent through the serial port.
   Wire.endTransmission();                                                     //end the I2C data transmission.
 
   delay(time_);
-
 
   Wire.requestFrom(address, 32, 1);
 
@@ -226,7 +275,7 @@ float readAtlasSensor(){
     }
   }
 
-  //Serial.println(ec_data);                  //print the data.
+  Serial.println(ec_data);                  //print the data.
   return atof(ec_data);
 
 }
@@ -240,11 +289,30 @@ void getGPS(double* lat, double* lon){
     *lat = gps.location.lat();
     *lon = gps.location.lng();
   } else {
-    Serial.print(F("INVALID"));
-  }
+    Serial.print(F("INVALID")); 
 
+    *lat = -27.108573;
+    *lon = -109.291542;
+  }
 }
 
+// COLLECT WIRELESS METRIC
+//void getCellMetrics(float* sinr, float* rssi, float* rsrp, float* rsrq){
+
+//  {
+// /   J *req = NoteNewRequest("card.wireless");
+//    if (J *rsp = NoteRequestResponse(req)){
+
+//      J *netJson = JGetObject(rsp, "net");
+//      *rssi = JGetInt(netJson, "rssi");
+//      *sinr = JGetInt(netJson, "sinr");
+//      *rsrp = JGetInt(netJson, "rsrp");
+//      *rsrq = JGetInt(netJson, "rsrq");
+//      }
+//  }
+//}
+
+// COLLECT TIME STAMP FOR DATA POINTS
 String getCardTime(){
     // get current time
   J *req = NoteNewRequest("card.time");
@@ -277,6 +345,7 @@ String getDateTimeFromUnix(time_t time, int minutesOffset) {
 }
 
 void writeToSD(String wtime, double latitude, double longitude, double sal, double temp, File &f){
+  Serial.println("In writeToSD");
   f.print(wtime);
   f.print(F(","));
   f.print(latitude, 6);
@@ -287,6 +356,7 @@ void writeToSD(String wtime, double latitude, double longitude, double sal, doub
   f.print(F(","));
   f.println(temp);
   f.flush();
+  Serial.println("Line flushed");
 }
 
 void signalErrorWithLED(){
