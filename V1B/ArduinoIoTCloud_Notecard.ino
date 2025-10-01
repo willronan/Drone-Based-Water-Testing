@@ -71,9 +71,6 @@ int fileCount = 0;
 // #define ATTN_PIN 9
 
 
-
-
-
 /*
 
   SYSTEM SETUP
@@ -98,25 +95,6 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   Serial.println(1);
 
-  //{
-  //  J *req = NoteNewRequest("hub.set");
-  //  if (req != NULL) {
-  //    JAddStringToObject(req, "product", productUID);
-  //    JAddStringToObject(req, "mode", "continuous");
-  //    NoteRequest(req);
-  //  }
-  //}
-
-  //J *req = NoteNewRequest("hub.sync");
-  //{
-  //  if (req != NULL) {
-  //    JAddStringToObject(req, "allow", "true");
-  //  }
-  //  Serial.println("Set allow to true");
-  //  NoteRequest(req);
-  //}
-
-
   // initialize sensor data 
   double salinity = 0;
   double temperature = 0;
@@ -127,11 +105,9 @@ void setup() {
 
   gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RXPin, TXPin); 
 
-  
-  //  UART defined in 
+  //  I2C
   Wire.begin();                       //  I2C 
   tempSensor.init();                  //  I2C
-  Serial.println(2);
 
   // connects variables to arduino cloud
   initProperties();
@@ -156,16 +132,15 @@ void loop() {
     // update cloud variables
   if(ArduinoCloud.connected()){
     ArduinoCloud.update();
-  }
+  } 
 
   // DATA COLLECTION HAPPENS HERE 
   if (led == true){
 
     // collect data
     temperature = tempSensor.temperature(); 
+    Serial.println(temperature);
     salinity = readAtlasSensor();
-    Serial.print("Salinity:");
-    Serial.println(salinity);
     tempSensor.read();
     getGPS(&lat, &lon); 
     location = Location(lat, lon);
@@ -182,7 +157,7 @@ void loop() {
     // save in microSD file
     if(microSdSafety == true){
       Serial.println("calling writeToSD");
-      writeToSD(time_and_date, lat, lon, salinity, temperature, file);
+      writeToSD(time_and_date, lat, lon, salinity, temperature, note, file);
 
     }
 
@@ -194,7 +169,6 @@ void loop() {
  * 'onLedChange' is called when the "led" property of your Thing changes
  */
 void onLedChange() {
-  Serial.print("LED set to ");
   Serial.println(led);
   digitalWrite(LED_BUILTIN, led);
 }
@@ -205,6 +179,7 @@ void onMicroSDChange(){
     SPI.begin(sck, miso, mosi, cs);     //  SPI
     if (!SD.begin(cs)) {                
       Serial.println("Card Mount Failed");
+      error = "MicroSD reader disconnected";
       return;
     }
 
@@ -213,6 +188,11 @@ void onMicroSDChange(){
     time_and_date.replace("Z", "");   // Optional: remove 'Z'
     fileCount = fileCount + 1;
     String fileName = "/drone_reading_" + time_and_date + "_session" + String(fileCount) + ".txt";
+
+    // Close the old file if it's open
+    if (file) {
+      file.close();
+    }
 
 
     file = SD.open(fileName, FILE_WRITE);
@@ -233,6 +213,11 @@ void onMicroSDChange(){
     Serial.printf("SPI ended, safe to eject microSD");
 
   }
+}
+
+void onNoteChange(){
+  delay(0);
+
 }
 
 // COLLECT SALINITY SENSOR DATA
@@ -282,6 +267,10 @@ float readAtlasSensor(){
 
 void getGPS(double* lat, double* lon){   
   Serial.println("getting GPS");
+  if (!gpsSerial.available()){
+    error = "GPS disconnected";
+  }
+
   while (gpsSerial.available() > 0) {
     gps.encode(gpsSerial.read());
   }
@@ -296,21 +285,6 @@ void getGPS(double* lat, double* lon){
   }
 }
 
-// COLLECT WIRELESS METRIC
-//void getCellMetrics(float* sinr, float* rssi, float* rsrp, float* rsrq){
-
-//  {
-// /   J *req = NoteNewRequest("card.wireless");
-//    if (J *rsp = NoteRequestResponse(req)){
-
-//      J *netJson = JGetObject(rsp, "net");
-//      *rssi = JGetInt(netJson, "rssi");
-//      *sinr = JGetInt(netJson, "sinr");
-//      *rsrp = JGetInt(netJson, "rsrp");
-//      *rsrq = JGetInt(netJson, "rsrq");
-//      }
-//  }
-//}
 
 // COLLECT TIME STAMP FOR DATA POINTS
 String getCardTime(){
@@ -344,8 +318,10 @@ String getDateTimeFromUnix(time_t time, int minutesOffset) {
   return String(buffer);
 }
 
-void writeToSD(String wtime, double latitude, double longitude, double sal, double temp, File &f){
+void writeToSD(String wtime, double latitude, double longitude, double sal, double temp, String notepad, File &f){
   Serial.println("In writeToSD");
+  f.print(notepad);
+  f.print(F(","));
   f.print(wtime);
   f.print(F(","));
   f.print(latitude, 6);
