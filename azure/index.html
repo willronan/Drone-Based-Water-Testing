@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+    
+<head>
+    <title>Simple 2D WebGL layer - Azure Maps Web SDK Samples</title>
+
+    <meta charset="utf-8" />
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="This sample showcases the creation of a custom WebGL layer that draws a 2D triangle directly on the map." />
+    <meta name="keywords" content="Microsoft, Azure, Maps, 3D, 2D, WebGL" />
+    <meta name="author" content="Microsoft Azure Maps" />
+    <meta name="version" content="3.0" />
+    <meta name="screenshot" content="screenshot.jpg" />
+
+    <link href="https://samples.azuremaps.com/samples.min.css" rel="stylesheet" />
+
+    <!-- Add references to the Azure Maps Map control JavaScript and stylesheet files -->
+    <link href="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.css" rel="stylesheet" />
+    <script src="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.js"></script>
+
+
+    <style>
+    #legend {
+        position: absolute;
+        bottom: 30px;
+        right: 20px;
+        background: rgba(255,255,255,0.9);
+        padding: 10px 12px;
+        border-radius: 6px;
+        font-family: sans-serif;
+        font-size: 12px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+        pointer-events: none;
+    }
+
+    .legend-title {
+        font-weight: bold;
+        margin-bottom: 6px;
+        text-align: center;
+    }
+
+    .legend-bar {
+        width: 180px;
+        height: 14px;
+        border-radius: 4px;
+        background: linear-gradient(
+            to right,
+            rgb(0,0,255),
+            rgb(255,0,0)
+        );
+    }
+
+    .legend-labels {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 4px;
+    }
+    </style>
+
+</head>
+<body>
+    <div id="map"></div>
+
+
+    <fieldset id="info">
+        <legend>Simple 2D WebGL layer</legend>
+        This sample showcases the creation of a custom WebGL layer that draws a 2D triangle directly on the map.
+    </fieldset>
+
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+    <script src="https://unpkg.com/delaunator@5.0.0/delaunator.min.js"></script>
+
+    <script>
+        /* ============================================================
+        SHADERS
+        ============================================================ */
+
+        const vertexSource = `
+        uniform mat4 u_matrix;
+        uniform vec2 u_anchor;
+
+        attribute vec2 a_pos;
+        attribute float a_salinity;
+
+        varying float v_salinity;
+
+        void main() {
+            vec2 worldPos = a_pos + u_anchor;
+            gl_Position = u_matrix * vec4(worldPos, 0.0, 1.0);
+
+            v_salinity = a_salinity;
+        }
+        `;
+
+
+
+        const fragmentSource = `
+        precision mediump float;
+
+        varying float v_salinity;
+
+        // Simple linear color ramp
+        vec3 salinityToColor(float s) {
+            // Adjust these to your dataset
+            float minS = 0.0;
+            float maxS = 13.0;
+
+            float t = clamp((s - minS) / (maxS - minS), 0.0, 1.0);
+
+            // Blue → Cyan → Green → Yellow → Red
+            vec3 blue   = vec3(0.0, 0.0, 1.0);
+            vec3 red    = vec3(1.0, 0.0, 0.0);
+
+            return mix(blue, red, t);
+        }
+
+        void main() {
+            vec3 color = salinityToColor(v_salinity);
+            gl_FragColor = vec4(color, 0.85);
+        }
+        `;
+
+
+        // ============================================================
+        // SHARED MESH STATE (authoritative source of truth)
+        // ============================================================
+
+        const meshState = {
+            ready: false,
+            anchor: null,
+            vertices: null,
+            vertexCount: 0,
+            buffer: null,
+            gl: null,
+            program: null,
+            aPos: null,
+            aSal: null
+        };
+
+        
+        // ============================================================
+        // LIVE STATE (keeps track of point ingestions )
+        // ============================================================
+        const liveState = {
+            rows: [],        // raw CSV rows
+            points: [],      // processed points (local coords)
+            cursor: 0,       // how many points have been ingested
+            timer: null
+        };
+
+
+
+        /* ============================================================
+        WEBGL RENDERER
+        ============================================================ */
+
+        const renderer = {
+            onAdd: function (map, gl) {
+                console.log("WebGL onAdd fired");
+
+                meshState.gl = gl;
+                meshState.ready = true;
+
+                const vs = gl.createShader(gl.VERTEX_SHADER);
+                gl.shaderSource(vs, vertexSource);
+                gl.compileShader(vs);
+
+                const fs = gl.createShader(gl.FRAGMENT_SHADER);
+                gl.shaderSource(fs, fragmentSource);
+                gl.compileShader(fs);
+
+                meshState.program = gl.createProgram();
+                gl.attachShader(meshState.program, vs);
+                gl.attachShader(meshState.program, fs);
+                gl.linkProgram(meshState.program);
+
+                meshState.aPos = gl.getAttribLocation(meshState.program, "a_pos");
+                meshState.aSal = gl.getAttribLocation(meshState.program, "a_salinity");
+
+                meshState.buffer = gl.createBuffer();
+
+                // 🔑 If CSV already loaded, upload now
+                if (meshState.vertices && meshState.anchor) {
+                    uploadMesh();
+                }
+            },
+
+
+            render: function (gl, matrix) {
+                if (!meshState.vertexCount) return;
+
+                gl.useProgram(meshState.program);
+
+                gl.uniformMatrix4fv(
+                    gl.getUniformLocation(meshState.program, "u_matrix"),
+                    false,
+                    matrix
+                );
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, meshState.buffer);
+
+                gl.enableVertexAttribArray(meshState.aPos);
+                gl.vertexAttribPointer(
+                    meshState.aPos,
+                    2,
+                    gl.FLOAT,
+                    false,
+                    12,
+                    0
+                );
+
+                // Salinity
+                gl.enableVertexAttribArray(meshState.aSal);
+                gl.vertexAttribPointer(
+                    meshState.aSal,
+                    1,
+                    gl.FLOAT,
+                    false,
+                    12, // stride
+                    8   // offset (2 floats * 4 bytes)
+                );
+
+                const uAnchor = gl.getUniformLocation(meshState.program, "u_anchor");
+
+                if (!meshState.anchor || meshState.anchor.length !== 2) {
+                    console.warn("Invalid anchor uniform:", meshState.anchor);
+                    return;
+                }
+
+                gl.uniform2fv(uAnchor, meshState.anchor);
+
+                gl.drawArrays(gl.TRIANGLES, 0, meshState.vertexCount);
+            }
+
+
+        };
+
+        function uploadMesh() {
+            if (!meshState.ready) {
+                console.log('Mesh upload deferred (WebGL not ready)');
+                return;
+            }
+
+            const gl = meshState.gl;
+
+            meshState.vertexCount = meshState.vertices.length / 3;
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, meshState.buffer);
+            gl.bufferData(
+                gl.ARRAY_BUFFER,
+                new Float32Array(meshState.vertices),
+                gl.STATIC_DRAW
+            );
+
+            forceRepaint();
+
+            console.log(
+                'Mesh uploaded:',
+                meshState.vertexCount,
+                'vertices'
+            );
+        }
+
+
+        function forceRepaint() {
+            const cam = map.getCamera();
+            map.setCamera(cam);
+        }
+
+
+
+        /* ============================================================
+        MAP SETUP
+        ============================================================ */
+
+        const map = new atlas.Map('map', {
+            zoom: 16,
+            center: [-123.143, 49.321],
+            language: 'none',
+            antialias: true,
+            authOptions: {
+                authType: 'subscriptionKey',
+                subscriptionKey: 'BiFBxBZr57kOzP4jIKkOdDTUnfHc5eOM8IilEc9I31cADWYegCyOJQQJ99CAAC8vTInE4gDzAAAgAZMP4MG4'
+            }
+        });
+
+        map.events.add('ready', () => {
+            const layer = new atlas.layer.WebGLLayer('triangles', { renderer });
+            
+            map.layers.add(layer, 'labels');
+
+            loadCSV(layer);
+        });
+
+        /* ============================================================
+        DATA PIPELINE
+        ============================================================ */
+        function loadCSV(layer) {
+            fetch('data.csv')
+                .then(r => {
+                    console.log('CSV status:', r.status);
+                    return r.text();
+                })
+                .then(csv => parseCSV(csv));
+        }
+
+        function parseCSV(csv) {
+            Papa.parse(csv, {
+                header: true,
+                dynamicTyping: true,
+                complete: res => {
+                    liveState.rows = res.data
+                        .map(r => ({
+                            latitude: Number(r.latitude),
+                            longitude: Number(r.longitude),
+                            salinity: Number(r.salinity)
+                        }))
+                        .filter(r =>
+                            Number.isFinite(r.latitude) &&
+                            Number.isFinite(r.longitude) &&
+                            Number.isFinite(r.salinity)
+                        );
+
+                    if (liveState.rows.length < 3) return;
+
+                    // Fixed anchor = first valid point
+                    const anchorLL = [
+                        liveState.rows[0].longitude,
+                        liveState.rows[0].latitude
+                    ];
+
+                    const anchorMP = atlas.data.MercatorPoint.fromPosition(anchorLL);
+                    meshState.anchor = new Float32Array([anchorMP[0], anchorMP[1]]);
+
+                    console.log("Live anchor set:", anchorLL);
+
+                    startLiveIngestion();
+                }
+            });
+        }
+
+        function startLiveIngestion() {
+            liveState.timer = setInterval(() => {
+                if (liveState.cursor >= liveState.rows.length) {
+                    clearInterval(liveState.timer);
+                    console.log("Live feed complete");
+                    return;
+                }
+
+                ingestNextPoint(liveState.rows[liveState.cursor]);
+                liveState.cursor++;
+            }, 1000);
+        }
+
+        function ingestNextPoint(row) {
+            const lat = row.latitude;
+            const lon = row.longitude;
+            const sal = row.salinity;
+
+            if (lat === 0 && lon === 0) return;
+
+            const mp = atlas.data.MercatorPoint.fromPosition([lon, lat]);
+
+            const x = mp[0] - meshState.anchor[0];
+            const y = mp[1] - meshState.anchor[1];
+
+            liveState.points.push({
+                lon,
+                lat,
+                x,
+                y,
+                salinity: sal
+            });
+
+            if (liveState.points.length < 3) return;
+
+            retriangulate();
+        }
+
+        function retriangulate() {
+            // Merge nearby points (same rule as before)
+            const mergedPoints = mergePoints(liveState.points, 1e-7);
+
+            if (mergedPoints.length < 3) return;
+
+            const delaunay = Delaunator.from(
+                mergedPoints.map(p => [p.x, p.y])
+            );
+
+            const vertices = [];
+
+            for (let i = 0; i < delaunay.triangles.length; i += 3) {
+                const a = mergedPoints[delaunay.triangles[i]];
+                const b = mergedPoints[delaunay.triangles[i + 1]];
+                const c = mergedPoints[delaunay.triangles[i + 2]];
+
+                const avgSal = (a.salinity + b.salinity + c.salinity) / 3;
+
+                vertices.push(
+                    a.x, a.y, avgSal,
+                    b.x, b.y, avgSal,
+                    c.x, c.y, avgSal
+                );
+            }
+
+            meshState.vertices = vertices;
+            uploadMesh();
+        }
+
+
+        /* ============================================================
+        POINT MERGING
+        ============================================================ */
+
+        function mergePoints(points, radiusMeters) {
+            const merged = [];
+
+            for (const p of points) {
+                let found = false;
+
+                for (const m of merged) {
+                    const dx = p.x - m.x;
+                    const dy = p.y - m.y;
+                    const dist = Math.hypot(dx, dy);
+
+                    if (dist < radiusMeters) {
+                        m.x = (m.x + p.x) / 2;
+                        m.y = (m.y + p.y) / 2;
+                        m.lon = (m.lon + p.lon) / 2;
+                        m.lat = (m.lat + p.lat) / 2;
+                        m.salinity = (m.salinity + p.salinity) / 2;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    merged.push({ ...p });
+                }
+            }
+
+            return merged;
+        }
+
+
+
+    </script>
+
+    <div id="legend">
+        <div class="legend-title">Salinity</div>
+        <div class="legend-bar"></div>
+        <div class="legend-labels">
+            <span id="legend-min"></span>
+            <span id="legend-max"></span>
+        </div>
+    </div>
+
+
+
+</body>
+</html>
