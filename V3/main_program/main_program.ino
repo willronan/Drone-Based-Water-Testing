@@ -16,24 +16,24 @@
 #define usbSerial Serial
 
 #if !defined(LED_BUILTIN) && !defined(ARDUINO_NANO_ESP32)
-static int const LED_BUILTIN = 2;   // LED definition
+static int const LED_BUILTIN = 2;
 #endif
 
-TSYS01 tempSensor;        // Blue Robotics temperature sensor
-MS5837 pressureSensor;    // Blue Robotics pressure sensor
+TSYS01 tempSensor;
+MS5837 pressureSensor;
 
-TinyGPSPlus gps;          // GPS sensor
+TinyGPSPlus gps;
 const uint32_t GPS_BAUD = 9600;
 
-#define address 100       // I2C ID number for salinity sensor
-char computerdata[32];    // buffer used for communication from computer to integrated salinity sensor circuit
-#define MUX_ADDR 0x70     // 7-bit unshifted default I2C Address for multiplexer
-int time_ = 570;          // delay between salinity measurements
-char AtlasCommand[32] = "r"; // read command to poll salinity sensor
-byte code = 0;            // holds sensor response
-byte in_char = 0;         // 1 byte buffer to store inbound bytes from the EC Circuit
-byte i = 0;               // counter used for ec_data array
-char ec_data[32];         // 32 byte character array to hold incoming data from the EC circuit
+#define address 100
+char computerdata[32];
+#define MUX_ADDR 0x70
+int time_ = 570;
+char AtlasCommand[32] = "r";
+byte code = 0;
+byte in_char = 0;
+byte i = 0;
+char ec_data[32];
 
 // SPI pins for microSD data saving
 static const int sck = 5;
@@ -48,22 +48,19 @@ HardwareSerial gpsSerial(1);
 /*
   Global Variables
 */
-// Reference sea-level pressure (Pa)
 const float P0 = 101325.0;
-
-// Physical constants
-const float R = 8.3144598;   // J/(mol*K)
-const float g = 9.80665;     // m/s^2
-const float M = 0.0289644;   // kg/mol
+const float R = 8.3144598;
+const float g = 9.80665;
+const float M = 0.0289644;
 
 String error = "";
-float altitude = 0.0;
-float salinity = 0.0;
-float pressure = 0.0;
-float temperature = 0.0;
-float tempPress = 0.0;
-double lat = 0.0;
-double lon = 0.0;
+float altitude;
+float salinity;
+float pressure;
+float temperature;
+float tempPress;
+double lat;
+double lon;
 
 String measurementTimestamp = "";
 String measurementDate = "";
@@ -81,7 +78,6 @@ Notecard notecard;
 /*
   MUX Methods
 */
-// Enables a specific port number
 void enableMuxPort(byte portNumber) {
   if (portNumber > 7) return;
   Wire.beginTransmission(MUX_ADDR);
@@ -90,31 +86,27 @@ void enableMuxPort(byte portNumber) {
 }
 
 void disableMuxPort(byte portNumber) {
-  (void)portNumber;  // unused, kept for clarity
+  (void)portNumber;
   Wire.beginTransmission(MUX_ADDR);
-  Wire.write(0);     // disable all ports
+  Wire.write(0);
   Wire.endTransmission();
 }
 
 /*
-  Math Methods
+  Math / Time Helpers
 */
 float calculateAltitude(float P, float T_c) {
-  // Convert temp to Kelvin
   float T = T_c + 273.15;
-
-  // Hypsometric equation
   float factor = (R * T) / (g * M);
   return factor * log(P0 / P);
 }
 
-// Change a unix timestamp to a datetime string
 String getDateTimeFromUnix(time_t time, int minutesOffset) {
-  time_t adjustedTime = time + (minutesOffset * 60);  // adjust for timezone
+  time_t adjustedTime = time + (minutesOffset * 60);
   struct tm timeInfo;
   gmtime_r(&adjustedTime, &timeInfo);
 
-  char buffer[25];  // enough space for "YYYY-MM-DDTHH:MM:SSZ"
+  char buffer[25];
   snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02dZ",
            timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday,
            timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
@@ -134,7 +126,6 @@ String extractTimePart(const String& isoTimestamp) {
 
   String timePart = isoTimestamp.substring(tIndex + 1);
 
-  // Remove trailing Z if present
   if (timePart.endsWith("Z")) {
     timePart.remove(timePart.length() - 1);
   }
@@ -145,8 +136,6 @@ String extractTimePart(const String& isoTimestamp) {
 /*
   Hardware Methods
 */
-
-// COLLECT SALINITY SENSOR DATA
 float readAtlasSensor() {
   memset(ec_data, 0, sizeof(ec_data));
   i = 0;
@@ -158,21 +147,17 @@ float readAtlasSensor() {
   delay(time_);
 
   Wire.requestFrom(address, 32, 1);
-
   code = Wire.read();
 
   switch (code) {
     case 1:
       break;
-
     case 2:
       Serial.println("Failed");
       break;
-
     case 254:
       Serial.println("Pending");
       break;
-
     case 255:
       Serial.println("No Data");
       break;
@@ -216,7 +201,6 @@ void getGPS(double* lat, double* lon) {
   }
 }
 
-// COLLECT TIME STAMP FOR DATA POINTS
 String getCardTime() {
   J *req = NoteNewRequest("card.time");
   if (!req) {
@@ -264,18 +248,15 @@ void writeToSD(const String& timestamp,
 }
 
 void setup() {
-  // Initialize serial and wait up to 5 seconds for port to open
   Serial.begin(9600);
   for (unsigned long const serialBeginTime = millis(); !Serial && (millis() - serialBeginTime <= 5000); ) { }
 
   pinMode(LED_BUILTIN, OUTPUT);
   Serial.println(1);
 
-  // Connect to notecard
   notecard.begin();
   notecard.setDebugOutputStream(usbSerial);
 
-  // Establish notecard to notehub connection
   {
     J *req = notecard.newRequest("hub.set");
     if (req != NULL) {
@@ -285,30 +266,24 @@ void setup() {
     }
   }
 
-  // Initialize hardware
   gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RXPin, TXPin);
-
-  // I2C
   Wire.begin();
 
-  // Disable all mux ports initially
   for (byte x = 0; x <= 7; x++) {
     disableMuxPort(x);
   }
 
-  // --- Port 0: MS5837 (pressure sensor) ---
   enableMuxPort(0);
   delay(50);
   if (pressureSensor.init()) {
     pressureSensor.setModel(MS5837::MS5837_02BA);
-    pressureSensor.setFluidDensity(997); // freshwater
+    pressureSensor.setFluidDensity(997);
     Serial.println("Port 0: MS5837 initialized!");
   } else {
     Serial.println("Port 0: MS5837 init FAILED!");
   }
   disableMuxPort(0);
 
-  // --- Port 3: TSYS01 (temperature sensor) ---
   enableMuxPort(3);
   delay(50);
   if (tempSensor.init()) {
@@ -318,7 +293,6 @@ void setup() {
   }
   disableMuxPort(3);
 
-  // --- Port 4: Atlas Salinity sensor ---
   enableMuxPort(4);
   delay(50);
   Wire.beginTransmission(address);
@@ -337,7 +311,6 @@ void setup() {
     return;
   }
 
-  // Set up local data saving file
   measurementTimestamp = getCardTime();
   if (measurementTimestamp.length() == 0) {
     measurementTimestamp = "unknown_time";
@@ -382,7 +355,6 @@ void loop() {
     error = "Failed to get card time";
   }
 
-  // Atlas Salinity Sensor
   enableMuxPort(4);
   delay(10);
   salinity = readAtlasSensor();
@@ -392,7 +364,6 @@ void loop() {
 
   Serial.println("Polling other sensors");
 
-  // Poll pressure sensor
   enableMuxPort(0);
   delay(10);
   pressureSensor.read();
@@ -401,7 +372,6 @@ void loop() {
   altitude = calculateAltitude(pressure * 100, tempPress);
   disableMuxPort(0);
 
-  // Poll temp sensor
   enableMuxPort(3);
   delay(10);
   tempSensor.read();
@@ -416,7 +386,6 @@ void loop() {
     if (req != NULL) {
       JAddBoolToObject(req, "sync", true);
 
-      // Create JSON with data to transmit
       J *body = JCreateObject();
       if (body) {
         JAddNumberToObject(body, "temperature", temperature);
@@ -427,12 +396,12 @@ void loop() {
         JAddNumberToObject(body, "latitude", lat);
         JAddNumberToObject(body, "tempPress", tempPress);
 
-        // Canonical date/time schema
+        // New canonical schema
         JAddStringToObject(body, "Timestamp", measurementTimestamp.c_str());
         JAddStringToObject(body, "Date", measurementDate.c_str());
         JAddStringToObject(body, "EnclosureTime", measurementTime.c_str());
 
-        // Temporary backward compatibility if needed downstream
+        // Backward compatibility for current pipeline
         JAddStringToObject(body, "time", measurementTimestamp.c_str());
 
         JAddStringToObject(body, "error", error.c_str());
