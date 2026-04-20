@@ -53,6 +53,9 @@ const float R = 8.3144598;
 const float g = 9.80665;
 const float M = 0.0289644;
 
+// Hardcoded device type for this platform
+const char* DEVICE_TYPE = "Drone";
+
 String error = "";
 float altitude;
 float salinity;
@@ -63,8 +66,6 @@ double lat;
 double lon;
 
 String measurementTimestamp = "";
-String measurementDate = "";
-String measurementTime = "";
 
 int fileCount = 0;
 String fileName = "";
@@ -112,25 +113,6 @@ String getDateTimeFromUnix(time_t time, int minutesOffset) {
            timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
 
   return String(buffer);
-}
-
-String extractDatePart(const String& isoTimestamp) {
-  int tIndex = isoTimestamp.indexOf('T');
-  if (tIndex < 0) return "";
-  return isoTimestamp.substring(0, tIndex);
-}
-
-String extractTimePart(const String& isoTimestamp) {
-  int tIndex = isoTimestamp.indexOf('T');
-  if (tIndex < 0) return "";
-
-  String timePart = isoTimestamp.substring(tIndex + 1);
-
-  if (timePart.endsWith("Z")) {
-    timePart.remove(timePart.length() - 1);
-  }
-
-  return timePart;
 }
 
 /*
@@ -348,8 +330,6 @@ void loop() {
 
   Serial.println("Getting card time");
   measurementTimestamp = getCardTime();
-  measurementDate = extractDatePart(measurementTimestamp);
-  measurementTime = extractTimePart(measurementTimestamp);
 
   if (measurementTimestamp.length() == 0) {
     error = "Failed to get card time";
@@ -396,13 +376,11 @@ void loop() {
         JAddNumberToObject(body, "latitude", lat);
         JAddNumberToObject(body, "tempPress", tempPress);
 
-        // New canonical schema
+        // Canonical sample time from the device
         JAddStringToObject(body, "Timestamp", measurementTimestamp.c_str());
-        JAddStringToObject(body, "Date", measurementDate.c_str());
-        JAddStringToObject(body, "EnclosureTime", measurementTime.c_str());
 
-        // Backward compatibility for current pipeline
-        JAddStringToObject(body, "time", measurementTimestamp.c_str());
+        // Device metadata
+        JAddStringToObject(body, "deviceType", DEVICE_TYPE);
 
         JAddStringToObject(body, "error", error.c_str());
 
@@ -414,10 +392,8 @@ void loop() {
 
     Serial.print("Timestamp = ");
     Serial.println(measurementTimestamp);
-    Serial.print("Date = ");
-    Serial.println(measurementDate);
-    Serial.print("EnclosureTime = ");
-    Serial.println(measurementTime);
+    Serial.print("deviceType = ");
+    Serial.println(DEVICE_TYPE);
     Serial.print("lat = ");
     Serial.println(lat);
     Serial.print("lon = ");
