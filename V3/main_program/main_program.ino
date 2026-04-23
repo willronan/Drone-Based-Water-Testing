@@ -275,7 +275,7 @@ void setup() {
   }
   disableMuxPort(3);
 
-  enableMuxPort(4);
+  enableMuxPort(7);
   delay(50);
   Wire.beginTransmission(address);
   byte i2cerror = Wire.endTransmission();
@@ -284,7 +284,7 @@ void setup() {
   } else {
     Serial.println("Port 4: Atlas sensor NOT detected!");
   }
-  disableMuxPort(4);
+  disableMuxPort(7);
 
   SPI.begin(sck, miso, mosi, cs);
   if (!SD.begin(cs)) {
@@ -335,12 +335,12 @@ void loop() {
     error = "Failed to get card time";
   }
 
-  enableMuxPort(4);
+  enableMuxPort(7);
   delay(10);
   salinity = readAtlasSensor();
   Serial.print("Salinity = ");
   Serial.println(salinity);
-  disableMuxPort(4);
+  disableMuxPort(7);
 
   Serial.println("Polling other sensors");
 
