@@ -255,16 +255,16 @@ void setup() {
     disableMuxPort(x);
   }
 
-  enableMuxPort(0);
+  enableMuxPort(1);
   delay(50);
   if (pressureSensor.init()) {
     pressureSensor.setModel(MS5837::MS5837_02BA);
     pressureSensor.setFluidDensity(997);
-    Serial.println("Port 0: MS5837 initialized!");
+    Serial.println("Port 1: MS5837 initialized!");
   } else {
-    Serial.println("Port 0: MS5837 init FAILED!");
+    Serial.println("Port 1: MS5837 init FAILED!");
   }
-  disableMuxPort(0);
+  disableMuxPort(1);
 
   enableMuxPort(3);
   delay(50);
@@ -280,9 +280,9 @@ void setup() {
   Wire.beginTransmission(address);
   byte i2cerror = Wire.endTransmission();
   if (i2cerror == 0) {
-    Serial.println("Port 4: Atlas Salinity sensor detected!");
+    Serial.println("Port 7: Atlas Salinity sensor detected!");
   } else {
-    Serial.println("Port 4: Atlas sensor NOT detected!");
+    Serial.println("Port 7: Atlas sensor NOT detected!");
   }
   disableMuxPort(7);
 
@@ -344,13 +344,13 @@ void loop() {
 
   Serial.println("Polling other sensors");
 
-  enableMuxPort(0);
+  enableMuxPort(q);
   delay(10);
   pressureSensor.read();
   pressure = pressureSensor.pressure();
   tempPress = pressureSensor.temperature();
   altitude = calculateAltitude(pressure * 100, tempPress);
-  disableMuxPort(0);
+  disableMuxPort(1);
 
   enableMuxPort(3);
   delay(10);
