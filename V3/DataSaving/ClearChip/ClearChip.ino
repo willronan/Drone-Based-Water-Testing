@@ -1,72 +1,51 @@
 #include <SPI.h>
 #include <SD.h>
 
-#define CS_PIN 21  // Your SD chip select pin
-
-void deleteAllFiles(File dir);
+#define CS_PIN 21
 
 void setup() {
-  Serial.begin(9600);
-  delay(2000);  // Give time for Serial monitor to open
+  Serial.begin(115200);  // match your terminal
+  while (!Serial) { ; }
 
-  Serial.println("Initializing SD card...");
+  Serial.println("Initializing SD...");
 
   if (!SD.begin(CS_PIN)) {
-    Serial.println("SD Initialization failed!");
+    Serial.println("SD initialization failed!");
+    return;
+  }
+  Serial.println("SD initialized.");
+
+  const char *filename = "test.txt";  // user input
+  printFile(filename);
+}
+
+void loop() {}
+
+void printFile(const char *filename) {
+  // Build corrected path
+  String path = String(filename);
+  if (!path.startsWith("/")) {
+    path = "/" + path;
+  }
+
+  File file = SD.open(path.c_str(), FILE_READ);
+  if (!file) {
+    Serial.print("Failed to open file: ");
+    Serial.println(path);
     return;
   }
 
-  Serial.println("SD Initialization done.");
+  Serial.print("=== START OF ");
+  Serial.print(path);
+  Serial.println(" ===");
 
-  // Open root directory
-  File root = SD.open("/");
-  if (!root) {
-    Serial.println("Failed to open root directory!");
-    return;
+  while (file.available()) {
+    Serial.write(file.read());
   }
 
-  Serial.println("Starting deletion of all files...");
-  deleteAllFiles(root);
-  root.close();
+  Serial.print("\n=== END OF ");
+  Serial.print(path);
+  Serial.println(" ===");
 
-  Serial.println("All files deleted.");
-}
-
-void loop() {
-  // Nothing needed here
-}
-
-// Recursively delete every file
-void deleteAllFiles(File dir) {
-  while (true) {
-    File entry = dir.openNextFile();
-    if (!entry) {
-      // No more files
-      break;
-    }
-
-    if (entry.isDirectory()) {
-      Serial.print("Entering directory: ");
-      Serial.println(entry.name());
-
-      // Recurse into the directory
-      deleteAllFiles(entry);
-
-      entry.close();
-    } 
-    else {
-      // Delete the file
-      Serial.print("Deleting file: ");
-      Serial.print(entry.name());
-      
-      String path = "/" + String(entry.name());
-      entry.close(); // Must close before deletion
-
-      if (SD.remove(path)) {
-        Serial.println("  [OK]");
-      } else {
-        Serial.println("  [FAILED]");
-      }
-    }
-  }
+  file.close();
 }
