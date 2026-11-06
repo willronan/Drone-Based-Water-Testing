@@ -1,0 +1,130 @@
+import os
+import azure.functions as func
+import logging
+import json
+from azure.data.tables import TableServiceClient
+from datetime import datetime
+
+app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+TABLE_NAME = os.getenv("DRONE_TABLE_NAME", "droneData").strip()
+
+
+def parse_measurement_datetime(body: dict):
+    """
+    Expects:
+      body["Timestamp"]
+
+    Returns:
+      dt, timestamp_iso, date_iso, enclosure_time
+    """
+    timestamp_iso = body.get("Timestamp")
+
+    if isinstance(timestamp_iso, str) and timestamp_iso:
+        dt = datetime.strptime(timestamp_iso, "%Y-%m-%dT%H:%M:%SZ")
+        return (
+            dt,
+            timestamp_iso,
+            dt.strftime("%Y-%m-%d"),
+            dt.strftime("%H:%M:%S"),
+        )
+
+    raise ValueError("Missing or invalid Timestamp field in message body.")
+
+
+def parse_device_id(raw_device):
+    """
+    Example:
+      'dev:351077454567481' -> '351077454567481'
+    """
+    if not isinstance(raw_device, str) or not raw_device:
+        return "N/A"
+
+    if ":" in raw_device:
+        return raw_device.split(":", 1)[1]
+
+    return raw_device
+
+
+@app.service_bus_queue_trigger(
+    arg_name="azservicebus",
+    queue_name="drone-event",
+    connection="marinerobotics_SERVICEBUS")
+def servicebus_trigger(azservicebus: func.ServiceBusMessage):
+
+    message_body = azservicebus.get_body().decode("utf-8")
+    logging.info("Python ServiceBus Queue trigger processed a message: %s", message_body)
+
+    msg = json.loads(message_body)
+    body = msg.get("body", {})
+
+    event = msg.get("event")
+    text = body.get("text", "")
+    latitude = body.get("latitude", -9999)
+    longitude = body.get("longitude", -9999)
+    altitude = body.get("altitude", -9999)
+    pressure = body.get("pressure", -9999)
+    temp_pressure_sensor = body.get("tempPress", -9999)
+
+    # Existing sensor fields
+    salinity = body.get("salinity", body.get("atlas_salinity", -9999))
+    conductivity = body.get("conductivity", body.get("conductivity", -9999))
+    dedicated_temp_sensor = body.get("temperature", body.get("optode_temp", -9999))
+
+    # New depth fields
+    depth = body.get("depth", -9999)
+    depth_confidence = body.get("depthConfidence", -9999)
+
+    error = body.get("error", "")
+
+    device_type = body.get("deviceType", "N/A")
+    device_id = parse_device_id(msg.get("device"))
+
+    dt, timestamp_iso, date_iso, enclosure_time = parse_measurement_datetime(body)
+
+    entity = {
+        "PartitionKey": "sensor_data",
+        "RowKey": event or dt.strftime("%Y%m%dT%H%M%S"),
+
+        # Canonical sample time fields from device timestamp
+        "SampleTimestamp": timestamp_iso,
+        "Date": date_iso,
+        "EnclosureTime": enclosure_time,
+
+        # Device fields
+        "deviceType": device_type,
+        "deviceId": device_id,
+
+        # Sensor / location fields
+        "salinity": salinity,
+        "conductivity": conductivity,
+        "temperature": dedicated_temp_sensor,
+        "depth": depth,
+        "depthConfidence": depth_confidence,
+        "latitude": latitude,
+        "longitude": longitude,
+        "altitude": altitude,
+        "pressure": pressure,
+        "tempPressureSensor": temp_pressure_sensor,
+
+        # Misc metadata
+        "text": text,
+        "error": error
+    }
+
+    table_service = TableServiceClient.from_connection_string(
+        conn_str=os.getenv("AzureWebJobsStorage")
+    )
+    table_client = table_service.get_table_client(table_name=TABLE_NAME)
+
+    try:
+        table_client.create_table()
+    except Exception:
+        pass
+
+    table_client.create_entity(entity=entity)
+    logging.info(
+        "Stored data from %s into Table Storage for device %s.",
+        timestamp_iso,
+        device_id
+    )
